@@ -208,7 +208,7 @@
 
     .btn-row {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 10px;
       margin-top: 12px;
     }
@@ -238,6 +238,12 @@
       background: linear-gradient(135deg, #fff, #f4f7ff);
       color: var(--blue-deep);
       border: 1px solid rgba(30, 102, 255, 0.16);
+    }
+
+    .whatsapp {
+      background: linear-gradient(135deg, #25d366, #128c7e);
+      color: #fff;
+      box-shadow: 0 12px 28px rgba(18, 140, 126, 0.24);
     }
 
     .danger {
@@ -682,6 +688,7 @@
       <div class="btn-row">
         <button class="primary" id="pdfBtn" type="button">Export PDF</button>
         <button class="secondary" id="xlsxBtn" type="button">Export Excel</button>
+        <button class="whatsapp" id="whatsappBtn" type="button">Share on WhatsApp</button>
       </div>
       <div class="toolbar">
         <span class="chip" id="totalChip">Grand Total: 0</span>
@@ -786,6 +793,7 @@
       addRowBtn: document.getElementById('addRowBtn'),
       pdfBtn: document.getElementById('pdfBtn'),
       xlsxBtn: document.getElementById('xlsxBtn'),
+      whatsappBtn: document.getElementById('whatsappBtn'),
       rowsWrap: document.getElementById('rowsWrap'),
       messageBox: document.getElementById('messageBox'),
       totalChip: document.getElementById('totalChip'),
@@ -1136,6 +1144,61 @@
       }));
     }
 
+    function buildWhatsAppMessage() {
+      const billToLines = getBillToLines();
+      const rows = buildExportRows();
+      const lines = [
+        'AestheticRXNetwork Invoice',
+        '',
+        `Invoice No: ${formatInvoiceNo(state.invoiceNo)}`,
+        `Date: ${formatDateDisplay(state.invoiceDate)}`,
+        '',
+        'Bill To:',
+      ];
+
+      if (billToLines.length) {
+        billToLines.forEach((line) => lines.push(`* ${line}`));
+      } else {
+        lines.push('* Clinic Name / Doctor Name');
+      }
+
+      lines.push('', 'Items:');
+
+      if (rows.length) {
+        lines.push('* Qty | Item | Description | Unit Price | Total');
+        rows.forEach((row) => {
+          const description = row.description.trim() || '-';
+          lines.push(`* ${formatQty(row.qty)} | ${row.item.trim() || '-'} | ${description} | ${formatNumber(row.unitPrice)} | ${formatNumber(row.total)}`);
+        });
+      } else {
+        lines.push('* Qty | Item | Description | Unit Price | Total');
+      }
+
+      lines.push('', `Grand Total: ${formatNumber(grandTotal())}`, 'Payable to AestheticRXNetwork', 'Thank you for your connection with us!');
+
+      const footer = state.customFooter.trim();
+      if (footer) {
+        lines.push('', footer);
+      }
+
+      return lines.join('\n');
+    }
+
+    function shareOnWhatsApp() {
+      updateStateFromForm();
+      setMessage('');
+      const validation = validateInvoice();
+      if (validation) {
+        setMessage(validation, 'error');
+        return;
+      }
+
+      const message = buildWhatsAppMessage();
+      const url = `https://wa.me/?text=${encodeURIComponent(message)}`;
+      window.open(url, '_blank', 'noopener,noreferrer');
+      setMessage('WhatsApp share window opened.', 'success');
+    }
+
     async function exportPdf() {
       updateStateFromForm();
       setMessage('');
@@ -1358,6 +1421,7 @@
       els.addRowBtn.addEventListener('click', () => addRow(createRow()));
       els.pdfBtn.addEventListener('click', () => exportPdf());
       els.xlsxBtn.addEventListener('click', () => exportXlsx());
+      els.whatsappBtn.addEventListener('click', () => shareOnWhatsApp());
       els.logoUpload.addEventListener('change', async () => {
         const file = els.logoUpload.files && els.logoUpload.files[0];
         if (!file) return;
