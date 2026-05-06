@@ -240,12 +240,6 @@
       border: 1px solid rgba(30, 102, 255, 0.16);
     }
 
-    .whatsapp {
-      background: linear-gradient(135deg, #25d366, #128c7e);
-      color: #fff;
-      box-shadow: 0 12px 28px rgba(18, 140, 126, 0.24);
-    }
-
     .danger {
       background: #fff2f2;
       color: #b33636;
@@ -688,7 +682,6 @@
       <div class="btn-row">
         <button class="primary" id="pdfBtn" type="button">Export PDF</button>
         <button class="secondary" id="xlsxBtn" type="button">Export Excel</button>
-        <button class="whatsapp" id="whatsappBtn" type="button">Share on WhatsApp</button>
       </div>
       <div class="toolbar">
         <span class="chip" id="totalChip">Grand Total: 0</span>
@@ -793,7 +786,6 @@
       addRowBtn: document.getElementById('addRowBtn'),
       pdfBtn: document.getElementById('pdfBtn'),
       xlsxBtn: document.getElementById('xlsxBtn'),
-      whatsappBtn: document.getElementById('whatsappBtn'),
       rowsWrap: document.getElementById('rowsWrap'),
       messageBox: document.getElementById('messageBox'),
       totalChip: document.getElementById('totalChip'),
@@ -1211,6 +1203,29 @@
       return false;
     }
 
+    async function shareFileOnMobile(file, fallbackMessage) {
+      if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+        try {
+          await navigator.share({
+            title: 'AestheticRXNetwork Invoice',
+            text: fallbackMessage,
+            files: [file],
+          });
+          setMessage('Share sheet opened with the generated file.', 'success');
+          return true;
+        } catch (error) {
+          if (error && error.name === 'AbortError') {
+            return false;
+          }
+        }
+      }
+
+      const url = `https://wa.me/?text=${encodeURIComponent(fallbackMessage)}`;
+      window.open(url, '_blank', 'noopener,noreferrer');
+      setMessage('WhatsApp opened with the invoice message.', 'success');
+      return false;
+    }
+
     function shareOnWhatsApp() {
       updateStateFromForm();
       setMessage('');
@@ -1428,7 +1443,7 @@
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       });
       const fallbackMessage = buildFileShareMessage('Excel', fileName);
-      await shareFilesToWhatsApp([xlsxFile], fallbackMessage);
+      await shareFileOnMobile(xlsxFile, fallbackMessage);
 
       normalizeCurrentInvoiceNumber();
       saveDraft();
@@ -1456,7 +1471,6 @@
       els.addRowBtn.addEventListener('click', () => addRow(createRow()));
       els.pdfBtn.addEventListener('click', () => exportPdf());
       els.xlsxBtn.addEventListener('click', () => exportXlsx());
-      els.whatsappBtn.addEventListener('click', () => shareOnWhatsApp());
       els.logoUpload.addEventListener('change', async () => {
         const file = els.logoUpload.files && els.logoUpload.files[0];
         if (!file) return;
