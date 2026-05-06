@@ -1184,6 +1184,33 @@
       return lines.join('\n');
     }
 
+    function buildFileShareMessage(fileType, fileName) {
+      return `${fileType} invoice generated for ${formatInvoiceNo(state.invoiceNo)} on ${formatDateDisplay(state.invoiceDate)}.\n\n${fileName}`;
+    }
+
+    async function shareFilesToWhatsApp(files, fallbackMessage) {
+      if (navigator.share && (!navigator.canShare || navigator.canShare({ files }))) {
+        try {
+          await navigator.share({
+            title: 'AestheticRXNetwork Invoice',
+            text: fallbackMessage,
+            files,
+          });
+          setMessage('Share sheet opened with the generated file.', 'success');
+          return true;
+        } catch (error) {
+          if (error && error.name === 'AbortError') {
+            return false;
+          }
+        }
+      }
+
+      const url = `https://wa.me/?text=${encodeURIComponent(fallbackMessage)}`;
+      window.open(url, '_blank', 'noopener,noreferrer');
+      setMessage('WhatsApp opened with the invoice message.', 'success');
+      return false;
+    }
+
     function shareOnWhatsApp() {
       updateStateFromForm();
       setMessage('');
@@ -1229,12 +1256,15 @@
       pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height, undefined, 'FAST');
 
       const fileName = `invoice_${formatInvoiceNo(els.invoiceNo.value).replace('Rx# ', 'Rx').replace(/\s+/g, '')}.pdf`;
-      pdf.save(fileName);
+      const pdfBlob = pdf.output('blob');
+      const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
+      const fallbackMessage = buildFileShareMessage('PDF', fileName);
+      await shareFilesToWhatsApp([pdfFile], fallbackMessage);
 
       normalizeCurrentInvoiceNumber();
       saveDraft();
       renderInvoicePreview();
-      setMessage(`PDF exported successfully as ${fileName}.`, 'success');
+      setMessage(`PDF ready to share as ${fileName}.`, 'success');
     }
 
     async function exportXlsx() {
@@ -1393,12 +1423,17 @@
       XLSX.utils.book_append_sheet(wb, ws, 'Invoice');
 
       const fileName = `invoice_${formatInvoiceNo(els.invoiceNo.value).replace('Rx# ', 'Rx').replace(/\s+/g, '')}.xlsx`;
-      XLSX.writeFile(wb, fileName, { bookType: 'xlsx', cellStyles: true });
+      const workbookArray = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
+      const xlsxFile = new File([workbookArray], fileName, {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const fallbackMessage = buildFileShareMessage('Excel', fileName);
+      await shareFilesToWhatsApp([xlsxFile], fallbackMessage);
 
       normalizeCurrentInvoiceNumber();
       saveDraft();
       renderInvoicePreview();
-      setMessage(`Excel exported successfully as ${fileName}.`, 'success');
+      setMessage(`Excel ready to share as ${fileName}.`, 'success');
     }
 
     function attachEvents() {
