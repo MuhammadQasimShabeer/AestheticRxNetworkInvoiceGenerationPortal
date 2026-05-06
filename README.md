@@ -1,4 +1,4 @@
-# AestheticRXNetwork - Branding Assets
+# AestheticRXNetworkPortal separate feature  - Branding Assets
 
 This folder contains the official branding assets for **AestheticRXNetwork**.
 
