@@ -8,7 +8,7 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
   <style>
     :root {
       --bg: #f0f4ff;
@@ -903,209 +903,232 @@ async function doSharePdf() {
   bumpInvoiceNo(); save(); renderPreview();
 }
 
-// ── XLSX ── mirrors the PDF invoice layout exactly ──
-function buildXlsx() {
-  const rows = exportRows();
+// ── Logo → PNG base64 (works for data URLs and ./logo.png paths) ──
+async function getLogoPng() {
+  if (!state.logoSrc) return null;
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width  = img.naturalWidth  || 300;
+      c.height = img.naturalHeight || 300;
+      c.getContext('2d').drawImage(img, 0, 0);
+      resolve(c.toDataURL('image/png').split(',')[1]);
+    };
+    img.onerror = () => resolve(null);
+    img.src = state.logoSrc;
+  });
+}
+
+// ── XLSX — mirrors the PDF invoice exactly, logo included ──
+async function buildXlsx() {
+  await ensureLogo();
+  const rows      = exportRows();
   const bodyCount = Math.max(DEFAULT_ROWS, rows.length);
 
-  // Row indices (0-based)
-  const R_BRAND1 = 0, R_BRAND2 = 1, R_BRAND3 = 2, R_SPACE1 = 3;
-  const R_BILLTO1 = 4, R_BILLTO2 = 5, R_SPACE2 = 6;
-  const R_THEAD = 7;
-  const R_BODY  = 8; // data starts here
-  const R_TOTAL = R_BODY + bodyCount;
-  const R_SPACE3 = R_TOTAL + 1;
-  const R_FOOT  = R_TOTAL + 2; // footer lines start here
+  // Row numbers (1-based, ExcelJS style)
+  const R_BR1 = 1, R_BR2 = 2, R_BR3 = 3, R_SP1 = 4;
+  const R_BT1 = 5, R_BT2 = 6, R_SP2 = 7;
+  const R_TH  = 8;
+  const R_BD  = 9;                          // body starts
+  const R_TOT = R_BD + bodyCount;           // grand total row
+  const R_SP3 = R_TOT + 1;
+  const R_FT  = R_TOT + 2;                 // footer lines start
 
   const hasCustomFt = !!state.customFooter.trim();
   const footLines = [];
-  if (hasCustomFt) footLines.push(state.customFooter.trim());
-  footLines.push('Payable to AestheticRXNetwork');
-  footLines.push('Thank you for your connection with us!');
+  if (hasCustomFt) footLines.push({ text: state.customFooter.trim(), custom: true });
+  footLines.push({ text: 'Payable to AestheticRXNetwork',       custom: false });
+  footLines.push({ text: 'Thank you for your connection with us!', custom: false });
 
-  const totalRowCount = R_FOOT + footLines.length + 1;
+  // ── workbook / worksheet ──
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'AestheticRXNetwork';
+  const ws = wb.addWorksheet('Invoice', { pageSetup: { paperSize: 9, orientation: 'portrait' } });
 
-  // ── worksheet shell ──
-  const ws = {};
-  ws['!ref'] = `A1:E${totalRowCount}`;
+  ws.columns = [
+    { width: 10 },   // A: Qty
+    { width: 24 },   // B: Item # / Brand
+    { width: 37 },   // C: Description / Brand cont.
+    { width: 17 },   // D: Unit Price / Meta label
+    { width: 17 },   // E: Total / Meta value
+  ];
 
-  function addr(r, c) { return XLSX.utils.encode_cell({ r, c }); }
-  function cell(r, c, value, type, style) {
-    ws[addr(r, c)] = { v: value, t: type, s: style };
+  // ── shared style helpers ──
+  const ARGB = {
+    blue:    'FF1E4FFF', blueDark: 'FF0A2EB5',
+    gold:    'FFC98513', white:    'FFFFFFFF',
+    text:    'FF111827', muted:    'FF666666',
+    rowAlt:  'FFFBFDFF', totBg:    'FFF4F7FA',
+    border:  'FFCFD7EC',
+  };
+  const fillSolid = rgb => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: rgb } });
+  const thinLine  = { style: 'thin',   color: { argb: ARGB.border } };
+  const medLine   = { style: 'medium', color: { argb: ARGB.blue } };
+  const allThin   = { top: thinLine, bottom: thinLine, left: thinLine, right: thinLine };
+  const totBord   = { top: medLine,  bottom: medLine,  left: thinLine, right: thinLine };
+
+  function styleCell(cell, { font = {}, fill, border, align }) {
+    if (font)   cell.font      = { name: 'Calibri', size: 10, ...font };
+    if (fill)   cell.fill      = fill;
+    if (border) cell.border    = border;
+    if (align)  cell.alignment = { vertical: 'middle', ...align };
   }
 
-  // ── shared style tokens ──
-  const BLUE    = '1E4FFF';
-  const BLUEDARK= '0A2EB5';
-  const GOLD    = 'C98513';
-  const TEXT    = '111827';
-  const MUTED   = '666666';
-  const WHITE   = 'FFFFFF';
-  const ROWALT  = 'FBFDFF';
-  const TOTBG   = 'F4F7FA';
-  const MARKBG  = '1E4FFF';
+  // ── Row heights ──
+  ws.getRow(R_BR1).height = 30;
+  ws.getRow(R_BR2).height = 15;
+  ws.getRow(R_BR3).height = 15;
+  ws.getRow(R_SP1).height = 7;
+  ws.getRow(R_BT1).height = 16;
+  ws.getRow(R_BT2).height = 16;
+  ws.getRow(R_SP2).height = 6;
+  ws.getRow(R_TH ).height = 16;
+  for (let i = 0; i < bodyCount; i++) ws.getRow(R_BD + i).height = 14;
+  ws.getRow(R_TOT).height = 16;
+  ws.getRow(R_SP3).height = 8;
+  footLines.forEach((_, fi) => { ws.getRow(R_FT + fi).height = 15; });
 
-  const fillBlue  = { patternType: 'solid', fgColor: { rgb: BLUE } };
-  const fillMark  = { patternType: 'solid', fgColor: { rgb: MARKBG } };
-  const fillWhite = { patternType: 'solid', fgColor: { rgb: WHITE } };
-  const fillAlt   = { patternType: 'solid', fgColor: { rgb: ROWALT } };
-  const fillTot   = { patternType: 'solid', fgColor: { rgb: TOTBG } };
+  // ── Logo image ──
+  const logoPng = await getLogoPng();
+  if (logoPng) {
+    const imgId = wb.addImage({ base64: logoPng, extension: 'png' });
+    // Place in A1 spanning rows 1-3, sized to match PDF logo box
+    ws.addImage(imgId, {
+      tl: { col: 0, row: 0 },            // top-left: col A, row 1
+      ext: { width: 110, height: 100 },   // pixels — matches ~130×130 CSS at screen scale
+      editAs: 'oneCell',
+    });
+  }
 
-  const thin     = { style: 'thin',   color: { rgb: 'CFD7EC' } };
-  const medBlue  = { style: 'medium', color: { rgb: BLUE } };
-  const allThin  = { top: thin, bottom: thin, left: thin, right: thin };
-  const totBord  = { top: medBlue, bottom: medBlue, left: thin, right: thin };
+  // ── Header: row 1 — Brand name ──
+  ws.mergeCells(`B${R_BR1}:C${R_BR1}`);
+  styleCell(ws.getCell(`B${R_BR1}`), {
+    font:  { size: 20, bold: true, color: { argb: ARGB.blue } },
+    align: { horizontal: 'left' },
+  });
+  ws.getCell(`B${R_BR1}`).value = 'AestheticRXNetwork';
 
-  const fBrand   = { name: 'Calibri', sz: 18, bold: true,  color: { rgb: BLUE } };
-  const fTagline = { name: 'Calibri', sz: 8,  bold: true,  color: { rgb: GOLD } };
-  const fEmail   = { name: 'Calibri', sz: 10,              color: { rgb: BLUE } };
-  const fLabel   = { name: 'Calibri', sz: 10, bold: true,  color: { rgb: TEXT } };
-  const fNormal  = { name: 'Calibri', sz: 10,              color: { rgb: TEXT } };
-  const fThead   = { name: 'Calibri', sz: 10, bold: true,  color: { rgb: WHITE } };
-  const fTotal   = { name: 'Calibri', sz: 11, bold: true,  color: { rgb: BLUEDARK } };
-  const fFooter  = { name: 'Calibri', sz: 9,  italic: true,color: { rgb: MUTED } };
-  const fCustFt  = { name: 'Calibri', sz: 9,  bold: true,  color: { rgb: BLUEDARK } };
-  const fMark    = { name: 'Calibri', sz: 14, bold: true,  color: { rgb: WHITE } };
+  // row 2 — Tagline | Date
+  ws.mergeCells(`B${R_BR2}:C${R_BR2}`);
+  styleCell(ws.getCell(`B${R_BR2}`), {
+    font:  { size: 8, bold: true, color: { argb: ARGB.gold } },
+    align: { horizontal: 'left' },
+  });
+  ws.getCell(`B${R_BR2}`).value = 'Connected Aesthetic Care';
 
-  // ── HEADER: row 1 — Logo mark | Brand name | (right area empty top) ──
-  cell(R_BRAND1, 0, 'ARX', 's', { font: fMark, fill: fillMark, alignment: { horizontal: 'center', vertical: 'center' } });
-  cell(R_BRAND1, 1, 'AestheticRXNetwork', 's', { font: fBrand, alignment: { horizontal: 'left', vertical: 'center' } });
-  cell(R_BRAND1, 2, '', 's', { alignment: { horizontal: 'left', vertical: 'center' } });
-  cell(R_BRAND1, 3, '', 's', {});
-  cell(R_BRAND1, 4, '', 's', {});
+  styleCell(ws.getCell(`D${R_BR2}`), { font: { bold: true }, align: { horizontal: 'right' } });
+  ws.getCell(`D${R_BR2}`).value = 'Date:';
 
-  // row 2 — logo bg | Tagline | Date
-  cell(R_BRAND2, 0, '', 's', { fill: fillMark });
-  cell(R_BRAND2, 1, 'Connected Aesthetic Care', 's', { font: fTagline, alignment: { horizontal: 'left', vertical: 'center' } });
-  cell(R_BRAND2, 2, '', 's', {});
-  cell(R_BRAND2, 3, 'Date:', 's', { font: fLabel, alignment: { horizontal: 'right', vertical: 'bottom' } });
-  const dateCell = addr(R_BRAND2, 4);
-  ws[dateCell] = { v: new Date(state.invoiceDate + 'T00:00:00'), t: 'd', z: 'dd/mm/yyyy', s: { font: fNormal, alignment: { horizontal: 'right', vertical: 'bottom' } } };
+  const dateCell = ws.getCell(`E${R_BR2}`);
+  dateCell.value  = new Date(state.invoiceDate + 'T00:00:00');
+  dateCell.numFmt = 'dd/mm/yyyy';
+  styleCell(dateCell, { align: { horizontal: 'right' } });
 
-  // row 3 — logo bg | Email | Invoice No
-  cell(R_BRAND3, 0, '', 's', { fill: fillMark });
-  cell(R_BRAND3, 1, 'Email: aestheticrxnetwork@gmail.com', 's', { font: fEmail, alignment: { horizontal: 'left', vertical: 'center' } });
-  cell(R_BRAND3, 2, '', 's', {});
-  cell(R_BRAND3, 3, 'Invoice No:', 's', { font: fLabel, alignment: { horizontal: 'right', vertical: 'bottom' } });
-  cell(R_BRAND3, 4, state.invoiceNo, 's', { font: fNormal, alignment: { horizontal: 'right', vertical: 'bottom' } });
+  // row 3 — Email | Invoice No
+  ws.mergeCells(`B${R_BR3}:C${R_BR3}`);
+  styleCell(ws.getCell(`B${R_BR3}`), {
+    font:  { size: 10, color: { argb: ARGB.blue } },
+    align: { horizontal: 'left' },
+  });
+  ws.getCell(`B${R_BR3}`).value = 'Email: aestheticrxnetwork@gmail.com';
 
-  // spacer row
-  for (let c = 0; c < 5; c++) cell(R_SPACE1, c, '', 's', {});
+  styleCell(ws.getCell(`D${R_BR3}`), { font: { bold: true }, align: { horizontal: 'right' } });
+  ws.getCell(`D${R_BR3}`).value = 'Invoice No:';
 
-  // ── BILL TO ──
+  styleCell(ws.getCell(`E${R_BR3}`), { align: { horizontal: 'right' } });
+  ws.getCell(`E${R_BR3}`).value = state.invoiceNo;
+
+  // ── Bill To ──
+  styleCell(ws.getCell(`A${R_BT1}`), { font: { bold: true }, align: { horizontal: 'left' } });
+  ws.getCell(`A${R_BT1}`).value = 'Bill To:';
+
   const bl = billToLines();
-  cell(R_BILLTO1, 0, 'Bill To:', 's', { font: fLabel, alignment: { vertical: 'center' } });
-  cell(R_BILLTO1, 1, bl[0] || '', 's', { font: fNormal, alignment: { vertical: 'center' } });
-  for (let c = 2; c < 5; c++) cell(R_BILLTO1, c, '', 's', {});
+  ws.mergeCells(`B${R_BT1}:E${R_BT1}`);
+  ws.getCell(`B${R_BT1}`).value = bl[0] || '';
+  styleCell(ws.getCell(`B${R_BT1}`), { align: { horizontal: 'left' } });
 
-  cell(R_BILLTO2, 0, '', 's', {});
-  cell(R_BILLTO2, 1, bl[1] || '', 's', { font: fNormal, alignment: { vertical: 'center' } });
-  for (let c = 2; c < 5; c++) cell(R_BILLTO2, c, '', 's', {});
+  ws.mergeCells(`B${R_BT2}:E${R_BT2}`);
+  ws.getCell(`B${R_BT2}`).value = bl[1] || '';
+  styleCell(ws.getCell(`B${R_BT2}`), { align: { horizontal: 'left' } });
 
-  // spacer
-  for (let c = 0; c < 5; c++) cell(R_SPACE2, c, '', 's', {});
-
-  // ── TABLE HEADER ──
+  // ── Table header ──
   const hLabels = ['Qty', 'Item #', 'Description', 'Unit Price', 'Total'];
-  const hAlign  = ['left', 'left', 'left', 'right', 'right'];
-  for (let c = 0; c < 5; c++) {
-    cell(R_THEAD, c, hLabels[c], 's', {
-      font: fThead, fill: fillBlue, border: allThin,
-      alignment: { horizontal: hAlign[c], vertical: 'center' },
+  const hAligns = ['left', 'left', 'left', 'right', 'right'];
+  hLabels.forEach((lbl, ci) => {
+    const cell = ws.getRow(R_TH).getCell(ci + 1);
+    cell.value = lbl;
+    styleCell(cell, {
+      font:   { bold: true, color: { argb: ARGB.white } },
+      fill:   fillSolid(ARGB.blue),
+      border: allThin,
+      align:  { horizontal: hAligns[ci] },
     });
-  }
-
-  // ── TABLE BODY ──
-  const colAlign = ['left', 'left', 'left', 'right', 'right'];
-  for (let i = 0; i < bodyCount; i++) {
-    const r  = rows[i];
-    const ri = R_BODY + i;
-    const bg = i % 2 === 0 ? fillWhite : fillAlt;
-    const vals = r
-      ? [
-          { v: r.qty,       t: r.qty !== '' ? 'n' : 's' },
-          { v: r.item,      t: 's' },
-          { v: r.description, t: 's' },
-          { v: r.unitPrice, t: r.unitPrice !== '' ? 'n' : 's' },
-          { v: r.total,     t: r.total !== 0 ? 'n' : 's' },
-        ]
-      : Array(5).fill({ v: '', t: 's' });
-    for (let c = 0; c < 5; c++) {
-      cell(ri, c, vals[c].v, vals[c].t, {
-        font: fNormal, fill: bg, border: allThin,
-        alignment: { horizontal: colAlign[c], vertical: 'center' },
-      });
-    }
-  }
-
-  // ── GRAND TOTAL ROW ──
-  for (let c = 0; c < 3; c++) cell(R_TOTAL, c, '', 's', { fill: fillTot, border: totBord });
-  cell(R_TOTAL, 3, 'Grand Total', 's', { font: fTotal, fill: fillTot, border: totBord, alignment: { horizontal: 'right', vertical: 'center' } });
-  cell(R_TOTAL, 4, grandTotal(), 'n', { font: fTotal, fill: fillTot, border: totBord, alignment: { horizontal: 'right', vertical: 'center' } });
-
-  // spacer
-  for (let c = 0; c < 5; c++) cell(R_SPACE3, c, '', 's', {});
-
-  // ── FOOTER LINES ──
-  footLines.forEach((line, fi) => {
-    const ri  = R_FOOT + fi;
-    const isCustom = hasCustomFt && fi === 0;
-    cell(ri, 0, line, 's', {
-      font: isCustom ? fCustFt : fFooter,
-      alignment: { horizontal: 'center', vertical: 'center' },
-    });
-    for (let c = 1; c < 5; c++) cell(ri, c, '', 's', {});
   });
 
-  // ── MERGES ──
-  ws['!merges'] = [
-    { s: { r: R_BRAND1, c: 0 }, e: { r: R_BRAND3, c: 0 } }, // A1:A3 — logo mark
-    { s: { r: R_BRAND1, c: 1 }, e: { r: R_BRAND1, c: 2 } }, // B1:C1 — brand name
-    { s: { r: R_BRAND2, c: 1 }, e: { r: R_BRAND2, c: 2 } }, // B2:C2 — tagline
-    { s: { r: R_BRAND3, c: 1 }, e: { r: R_BRAND3, c: 2 } }, // B3:C3 — email
-    { s: { r: R_BILLTO1, c: 1 }, e: { r: R_BILLTO1, c: 4 } }, // B5:E5 — bill to line 1
-    { s: { r: R_BILLTO2, c: 1 }, e: { r: R_BILLTO2, c: 4 } }, // B6:E6 — bill to line 2
-    ...footLines.map((_, fi) => ({
-      s: { r: R_FOOT + fi, c: 0 }, e: { r: R_FOOT + fi, c: 4 },
-    })),
-  ];
+  // ── Data rows ──
+  const colAligns = ['left', 'left', 'left', 'right', 'right'];
+  for (let i = 0; i < bodyCount; i++) {
+    const r    = rows[i];
+    const rNum = R_BD + i;
+    const bg   = fillSolid(i % 2 === 0 ? ARGB.white : ARGB.rowAlt);
+    const vals = r ? [r.qty, r.item, r.description, r.unitPrice, r.total] : ['', '', '', '', ''];
+    vals.forEach((v, ci) => {
+      const cell = ws.getRow(rNum).getCell(ci + 1);
+      cell.value = v === '' ? null : v;
+      styleCell(cell, { fill: bg, border: allThin, align: { horizontal: colAligns[ci] } });
+    });
+  }
 
-  // ── COLUMN WIDTHS (match PDF proportions) ──
-  ws['!cols'] = [
-    { wch: 8  }, // A: Qty
-    { wch: 22 }, // B: Item #
-    { wch: 34 }, // C: Description
-    { wch: 16 }, // D: Unit Price
-    { wch: 16 }, // E: Total
-  ];
+  // ── Grand total ──
+  const totFill = fillSolid(ARGB.totBg);
+  for (let ci = 1; ci <= 3; ci++) {
+    const cell = ws.getRow(R_TOT).getCell(ci);
+    cell.value = null;
+    styleCell(cell, { fill: totFill, border: totBord });
+  }
+  const totLblCell = ws.getRow(R_TOT).getCell(4);
+  totLblCell.value = 'Grand Total';
+  styleCell(totLblCell, {
+    font: { size: 11, bold: true, color: { argb: ARGB.blueDark } },
+    fill: totFill, border: totBord, align: { horizontal: 'right' },
+  });
+  const totValCell = ws.getRow(R_TOT).getCell(5);
+  totValCell.value = grandTotal();
+  styleCell(totValCell, {
+    font: { size: 11, bold: true, color: { argb: ARGB.blueDark } },
+    fill: totFill, border: totBord, align: { horizontal: 'right' },
+  });
 
-  // ── ROW HEIGHTS ──
-  const rh = [];
-  rh[R_BRAND1] = { hpt: 28 };
-  rh[R_BRAND2] = { hpt: 14 };
-  rh[R_BRAND3] = { hpt: 14 };
-  rh[R_SPACE1] = { hpt: 7  };
-  rh[R_BILLTO1]= { hpt: 15 };
-  rh[R_BILLTO2]= { hpt: 15 };
-  rh[R_SPACE2] = { hpt: 6  };
-  rh[R_THEAD]  = { hpt: 15 };
-  for (let i = 0; i < bodyCount; i++) rh[R_BODY + i] = { hpt: 13.5 };
-  rh[R_TOTAL]  = { hpt: 15 };
-  rh[R_SPACE3] = { hpt: 8  };
-  footLines.forEach((_, fi) => { rh[R_FOOT + fi] = { hpt: 14 }; });
-  ws['!rows'] = rh;
+  // ── Footer ──
+  footLines.forEach(({ text, custom }, fi) => {
+    const rNum = R_FT + fi;
+    ws.mergeCells(`A${rNum}:E${rNum}`);
+    const cell = ws.getCell(`A${rNum}`);
+    cell.value = text;
+    styleCell(cell, {
+      font:  custom
+        ? { size: 9, bold: true,   color: { argb: ARGB.blueDark } }
+        : { size: 9, italic: true, color: { argb: ARGB.muted }    },
+      align: { horizontal: 'center' },
+    });
+  });
 
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Invoice');
-  const arr  = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
-  const name = `invoice_${state.invoiceNo.replace('Rx# ', 'Rx').replace(/\s+/g, '')}.xlsx`;
-  return { blob: new Blob([arr], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), name };
+  // ── Write buffer ──
+  const buffer = await wb.xlsx.writeBuffer();
+  const name   = `invoice_${state.invoiceNo.replace('Rx# ', 'Rx').replace(/\s+/g, '')}.xlsx`;
+  return {
+    blob: new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+    name,
+  };
 }
 async function doDownloadXlsx() {
   fromForm(); setMsg('');
   const v = validate(); if (v) { setMsg(v, 'error'); return; }
   save();
-  const { blob, name } = buildXlsx();
+  setMsg('Generating Excel…', '');
+  const { blob, name } = await buildXlsx();
   dlBlob(blob, name);
   bumpInvoiceNo(); save(); renderPreview();
   setMsg(`✅ Excel downloaded: ${name}`, 'success');
@@ -1114,7 +1137,8 @@ async function doShareXlsx() {
   fromForm(); setMsg('');
   const v = validate(); if (v) { setMsg(v, 'error'); return; }
   save();
-  const { blob, name } = buildXlsx();
+  setMsg('Generating Excel for sharing…', '');
+  const { blob, name } = await buildXlsx();
   const file = new File([blob], name, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const shared = await tryNativeShare([file], `Invoice ${state.invoiceNo} from AestheticRXNetwork`);
   if (!shared) {
