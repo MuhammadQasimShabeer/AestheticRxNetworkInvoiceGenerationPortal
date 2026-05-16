@@ -903,49 +903,201 @@ async function doSharePdf() {
   bumpInvoiceNo(); save(); renderPreview();
 }
 
-// ── XLSX ──
+// ── XLSX ── mirrors the PDF invoice layout exactly ──
 function buildXlsx() {
   const rows = exportRows();
   const bodyCount = Math.max(DEFAULT_ROWS, rows.length);
-  const totalRow = 8 + bodyCount;
-  const ft1 = totalRow + 2, ft2 = totalRow + 3;
+
+  // Row indices (0-based)
+  const R_BRAND1 = 0, R_BRAND2 = 1, R_BRAND3 = 2, R_SPACE1 = 3;
+  const R_BILLTO1 = 4, R_BILLTO2 = 5, R_SPACE2 = 6;
+  const R_THEAD = 7;
+  const R_BODY  = 8; // data starts here
+  const R_TOTAL = R_BODY + bodyCount;
+  const R_SPACE3 = R_TOTAL + 1;
+  const R_FOOT  = R_TOTAL + 2; // footer lines start here
+
   const hasCustomFt = !!state.customFooter.trim();
-  const ft3 = hasCustomFt ? ft2 + 1 : null;
+  const footLines = [];
+  if (hasCustomFt) footLines.push(state.customFooter.trim());
+  footLines.push('Payable to AestheticRXNetwork');
+  footLines.push('Thank you for your connection with us!');
 
-  const data = new Array(Math.max(ft3 || ft2, totalRow) + 2).fill(null).map(() => []);
-  data[6] = ['Qty', 'Item #', 'Description', 'Unit Price', 'Total'];
-  for (let i = 0; i < bodyCount; i++) {
-    const r = rows[i];
-    data[7 + i] = r ? [r.qty, r.item, r.description, r.unitPrice, r.total] : ['', '', '', '', ''];
+  const totalRowCount = R_FOOT + footLines.length + 1;
+
+  // ── worksheet shell ──
+  const ws = {};
+  ws['!ref'] = `A1:E${totalRowCount}`;
+
+  function addr(r, c) { return XLSX.utils.encode_cell({ r, c }); }
+  function cell(r, c, value, type, style) {
+    ws[addr(r, c)] = { v: value, t: type, s: style };
   }
-  data[totalRow - 1] = ['', '', '', 'Grand Total', grandTotal()];
-  data[ft1 - 1] = [state.customFooter.trim() || 'Payable to AestheticRXNetwork'];
-  data[ft2 - 1] = ['Thank you for your connection with us!'];
-  if (ft3) data[ft3 - 1] = [state.customFooter.trim()];
 
-  const ws = XLSX.utils.aoa_to_sheet(data);
-  ws['B1'] = { v: 'AestheticRXNetwork', t: 's' };
-  ws['B2'] = { v: 'Connected Aesthetic Care', t: 's' };
-  ws['B3'] = { v: 'Email: aestheticrxnetwork@gmail.com', t: 's' };
-  ws['D2'] = { v: 'Date:', t: 's' }; ws['E2'] = { v: new Date(state.invoiceDate + 'T00:00:00'), t: 'd', z: 'dd/mm/yyyy' };
-  ws['D3'] = { v: 'Invoice No:', t: 's' }; ws['E3'] = { v: state.invoiceNo, t: 's' };
-  ws['A5'] = { v: 'Bill To:', t: 's' };
+  // ── shared style tokens ──
+  const BLUE    = '1E4FFF';
+  const BLUEDARK= '0A2EB5';
+  const GOLD    = 'C98513';
+  const TEXT    = '111827';
+  const MUTED   = '666666';
+  const WHITE   = 'FFFFFF';
+  const ROWALT  = 'FBFDFF';
+  const TOTBG   = 'F4F7FA';
+  const MARKBG  = '1E4FFF';
+
+  const fillBlue  = { patternType: 'solid', fgColor: { rgb: BLUE } };
+  const fillMark  = { patternType: 'solid', fgColor: { rgb: MARKBG } };
+  const fillWhite = { patternType: 'solid', fgColor: { rgb: WHITE } };
+  const fillAlt   = { patternType: 'solid', fgColor: { rgb: ROWALT } };
+  const fillTot   = { patternType: 'solid', fgColor: { rgb: TOTBG } };
+
+  const thin     = { style: 'thin',   color: { rgb: 'CFD7EC' } };
+  const medBlue  = { style: 'medium', color: { rgb: BLUE } };
+  const allThin  = { top: thin, bottom: thin, left: thin, right: thin };
+  const totBord  = { top: medBlue, bottom: medBlue, left: thin, right: thin };
+
+  const fBrand   = { name: 'Calibri', sz: 18, bold: true,  color: { rgb: BLUE } };
+  const fTagline = { name: 'Calibri', sz: 8,  bold: true,  color: { rgb: GOLD } };
+  const fEmail   = { name: 'Calibri', sz: 10,              color: { rgb: BLUE } };
+  const fLabel   = { name: 'Calibri', sz: 10, bold: true,  color: { rgb: TEXT } };
+  const fNormal  = { name: 'Calibri', sz: 10,              color: { rgb: TEXT } };
+  const fThead   = { name: 'Calibri', sz: 10, bold: true,  color: { rgb: WHITE } };
+  const fTotal   = { name: 'Calibri', sz: 11, bold: true,  color: { rgb: BLUEDARK } };
+  const fFooter  = { name: 'Calibri', sz: 9,  italic: true,color: { rgb: MUTED } };
+  const fCustFt  = { name: 'Calibri', sz: 9,  bold: true,  color: { rgb: BLUEDARK } };
+  const fMark    = { name: 'Calibri', sz: 14, bold: true,  color: { rgb: WHITE } };
+
+  // ── HEADER: row 1 — Logo mark | Brand name | (right area empty top) ──
+  cell(R_BRAND1, 0, 'ARX', 's', { font: fMark, fill: fillMark, alignment: { horizontal: 'center', vertical: 'center' } });
+  cell(R_BRAND1, 1, 'AestheticRXNetwork', 's', { font: fBrand, alignment: { horizontal: 'left', vertical: 'center' } });
+  cell(R_BRAND1, 2, '', 's', { alignment: { horizontal: 'left', vertical: 'center' } });
+  cell(R_BRAND1, 3, '', 's', {});
+  cell(R_BRAND1, 4, '', 's', {});
+
+  // row 2 — logo bg | Tagline | Date
+  cell(R_BRAND2, 0, '', 's', { fill: fillMark });
+  cell(R_BRAND2, 1, 'Connected Aesthetic Care', 's', { font: fTagline, alignment: { horizontal: 'left', vertical: 'center' } });
+  cell(R_BRAND2, 2, '', 's', {});
+  cell(R_BRAND2, 3, 'Date:', 's', { font: fLabel, alignment: { horizontal: 'right', vertical: 'bottom' } });
+  const dateCell = addr(R_BRAND2, 4);
+  ws[dateCell] = { v: new Date(state.invoiceDate + 'T00:00:00'), t: 'd', z: 'dd/mm/yyyy', s: { font: fNormal, alignment: { horizontal: 'right', vertical: 'bottom' } } };
+
+  // row 3 — logo bg | Email | Invoice No
+  cell(R_BRAND3, 0, '', 's', { fill: fillMark });
+  cell(R_BRAND3, 1, 'Email: aestheticrxnetwork@gmail.com', 's', { font: fEmail, alignment: { horizontal: 'left', vertical: 'center' } });
+  cell(R_BRAND3, 2, '', 's', {});
+  cell(R_BRAND3, 3, 'Invoice No:', 's', { font: fLabel, alignment: { horizontal: 'right', vertical: 'bottom' } });
+  cell(R_BRAND3, 4, state.invoiceNo, 's', { font: fNormal, alignment: { horizontal: 'right', vertical: 'bottom' } });
+
+  // spacer row
+  for (let c = 0; c < 5; c++) cell(R_SPACE1, c, '', 's', {});
+
+  // ── BILL TO ──
   const bl = billToLines();
-  ws['B5'] = { v: bl[0] || '', t: 's' };
-  if (bl[1]) ws['B6'] = { v: bl[1], t: 's' };
+  cell(R_BILLTO1, 0, 'Bill To:', 's', { font: fLabel, alignment: { vertical: 'center' } });
+  cell(R_BILLTO1, 1, bl[0] || '', 's', { font: fNormal, alignment: { vertical: 'center' } });
+  for (let c = 2; c < 5; c++) cell(R_BILLTO1, c, '', 's', {});
 
+  cell(R_BILLTO2, 0, '', 's', {});
+  cell(R_BILLTO2, 1, bl[1] || '', 's', { font: fNormal, alignment: { vertical: 'center' } });
+  for (let c = 2; c < 5; c++) cell(R_BILLTO2, c, '', 's', {});
+
+  // spacer
+  for (let c = 0; c < 5; c++) cell(R_SPACE2, c, '', 's', {});
+
+  // ── TABLE HEADER ──
+  const hLabels = ['Qty', 'Item #', 'Description', 'Unit Price', 'Total'];
+  const hAlign  = ['left', 'left', 'left', 'right', 'right'];
+  for (let c = 0; c < 5; c++) {
+    cell(R_THEAD, c, hLabels[c], 's', {
+      font: fThead, fill: fillBlue, border: allThin,
+      alignment: { horizontal: hAlign[c], vertical: 'center' },
+    });
+  }
+
+  // ── TABLE BODY ──
+  const colAlign = ['left', 'left', 'left', 'right', 'right'];
+  for (let i = 0; i < bodyCount; i++) {
+    const r  = rows[i];
+    const ri = R_BODY + i;
+    const bg = i % 2 === 0 ? fillWhite : fillAlt;
+    const vals = r
+      ? [
+          { v: r.qty,       t: r.qty !== '' ? 'n' : 's' },
+          { v: r.item,      t: 's' },
+          { v: r.description, t: 's' },
+          { v: r.unitPrice, t: r.unitPrice !== '' ? 'n' : 's' },
+          { v: r.total,     t: r.total !== 0 ? 'n' : 's' },
+        ]
+      : Array(5).fill({ v: '', t: 's' });
+    for (let c = 0; c < 5; c++) {
+      cell(ri, c, vals[c].v, vals[c].t, {
+        font: fNormal, fill: bg, border: allThin,
+        alignment: { horizontal: colAlign[c], vertical: 'center' },
+      });
+    }
+  }
+
+  // ── GRAND TOTAL ROW ──
+  for (let c = 0; c < 3; c++) cell(R_TOTAL, c, '', 's', { fill: fillTot, border: totBord });
+  cell(R_TOTAL, 3, 'Grand Total', 's', { font: fTotal, fill: fillTot, border: totBord, alignment: { horizontal: 'right', vertical: 'center' } });
+  cell(R_TOTAL, 4, grandTotal(), 'n', { font: fTotal, fill: fillTot, border: totBord, alignment: { horizontal: 'right', vertical: 'center' } });
+
+  // spacer
+  for (let c = 0; c < 5; c++) cell(R_SPACE3, c, '', 's', {});
+
+  // ── FOOTER LINES ──
+  footLines.forEach((line, fi) => {
+    const ri  = R_FOOT + fi;
+    const isCustom = hasCustomFt && fi === 0;
+    cell(ri, 0, line, 's', {
+      font: isCustom ? fCustFt : fFooter,
+      alignment: { horizontal: 'center', vertical: 'center' },
+    });
+    for (let c = 1; c < 5; c++) cell(ri, c, '', 's', {});
+  });
+
+  // ── MERGES ──
   ws['!merges'] = [
-    { s:{r:0,c:1}, e:{r:0,c:2} }, { s:{r:1,c:1}, e:{r:1,c:2} }, { s:{r:2,c:1}, e:{r:2,c:2} },
-    { s:{r:0,c:3}, e:{r:0,c:4} },
-    { s:{r:ft1-1,c:0}, e:{r:ft1-1,c:4} },
-    { s:{r:ft2-1,c:0}, e:{r:ft2-1,c:4} },
+    { s: { r: R_BRAND1, c: 0 }, e: { r: R_BRAND3, c: 0 } }, // A1:A3 — logo mark
+    { s: { r: R_BRAND1, c: 1 }, e: { r: R_BRAND1, c: 2 } }, // B1:C1 — brand name
+    { s: { r: R_BRAND2, c: 1 }, e: { r: R_BRAND2, c: 2 } }, // B2:C2 — tagline
+    { s: { r: R_BRAND3, c: 1 }, e: { r: R_BRAND3, c: 2 } }, // B3:C3 — email
+    { s: { r: R_BILLTO1, c: 1 }, e: { r: R_BILLTO1, c: 4 } }, // B5:E5 — bill to line 1
+    { s: { r: R_BILLTO2, c: 1 }, e: { r: R_BILLTO2, c: 4 } }, // B6:E6 — bill to line 2
+    ...footLines.map((_, fi) => ({
+      s: { r: R_FOOT + fi, c: 0 }, e: { r: R_FOOT + fi, c: 4 },
+    })),
   ];
-  if (ft3) ws['!merges'].push({ s:{r:ft3-1,c:0}, e:{r:ft3-1,c:4} });
-  ws['!cols'] = [{wch:9},{wch:20},{wch:30},{wch:16},{wch:16}];
+
+  // ── COLUMN WIDTHS (match PDF proportions) ──
+  ws['!cols'] = [
+    { wch: 8  }, // A: Qty
+    { wch: 22 }, // B: Item #
+    { wch: 34 }, // C: Description
+    { wch: 16 }, // D: Unit Price
+    { wch: 16 }, // E: Total
+  ];
+
+  // ── ROW HEIGHTS ──
+  const rh = [];
+  rh[R_BRAND1] = { hpt: 28 };
+  rh[R_BRAND2] = { hpt: 14 };
+  rh[R_BRAND3] = { hpt: 14 };
+  rh[R_SPACE1] = { hpt: 7  };
+  rh[R_BILLTO1]= { hpt: 15 };
+  rh[R_BILLTO2]= { hpt: 15 };
+  rh[R_SPACE2] = { hpt: 6  };
+  rh[R_THEAD]  = { hpt: 15 };
+  for (let i = 0; i < bodyCount; i++) rh[R_BODY + i] = { hpt: 13.5 };
+  rh[R_TOTAL]  = { hpt: 15 };
+  rh[R_SPACE3] = { hpt: 8  };
+  footLines.forEach((_, fi) => { rh[R_FOOT + fi] = { hpt: 14 }; });
+  ws['!rows'] = rh;
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Invoice');
-  const arr = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
+  const arr  = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
   const name = `invoice_${state.invoiceNo.replace('Rx# ', 'Rx').replace(/\s+/g, '')}.xlsx`;
   return { blob: new Blob([arr], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), name };
 }
