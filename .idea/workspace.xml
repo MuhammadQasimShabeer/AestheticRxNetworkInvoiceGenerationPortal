@@ -10,8 +10,27 @@
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
+  <component name="CopilotChats">
+    <option name="panelChat">
+      <chat>
+        <option name="activeSessionId" value="5cfaefbe-f4ac-4f74-a45d-23a79d1b1925" />
+        <option name="sessions">
+          <session>
+            <option name="chatType" value="PANEL" />
+            <option name="id" value="5cfaefbe-f4ac-4f74-a45d-23a79d1b1925" />
+            <option name="modeId" value="Agent" />
+            <option name="modelType" value="builtin_family" />
+            <option name="modelValue" value="auto" />
+            <option name="targetType" value="LOCAL" />
+          </session>
+        </option>
+        <option name="type" value="PANEL" />
+      </chat>
+    </option>
+  </component>
   <component name="CopilotPersistence">
     <persistenceIdMap>
+      <entry key="_/home/engmatix/qasim_ai/AestheticRxNetworkInvoiceGenerationPortal" value="3DnCPBPc4q5H60QGXSKv2TnGkOz" />
       <entry key="_/home/enigmatix/qasim_ai/AestheticRxNetworkInvoiceGenerationPortal" value="3DMDfteIZVTZj5U53ayhg5yK6L5" />
     </persistenceIdMap>
   </component>
@@ -37,12 +56,13 @@
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
     "codeWithMe.voiceChat.enabledByDefault": "false",
     "git-widget-placeholder": "master",
-    "last_opened_file_path": "/home/enigmatix/qasim_ai/AestheticRxNetworkInvoiceGenerationPortal",
+    "last_opened_file_path": "/home/engmatix/qasim_ai/AestheticRxNetworkInvoiceGenerationPortal",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
     "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm"
+    "nodejs_package_manager_path": "npm",
+    "vue.rearranger.settings.migration": "true"
   }
 }]]></component>
   <component name="SharedIndexes">
@@ -59,6 +79,7 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1778083151599</updated>
+      <workItem from="1778908422265" duration="520000" />
     </task>
     <servers />
   </component>
